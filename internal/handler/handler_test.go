@@ -292,6 +292,16 @@ func TestE2E_CancelBooking(t *testing.T) {
 	json.NewDecoder(w.Body).Decode(&roomResp)
 	roomID := roomResp["room"]["id"].(string)
 
+	w = doRequest(env, "POST", fmt.Sprintf("/rooms/%s/schedule/create", roomID),
+		map[string]any{
+			"daysOfWeek": []int{1, 2, 3, 4, 5, 6, 7},
+			"startTime":  "09:00",
+			"endTime":    "18:00",
+		}, adminToken)
+	if w.Code != 201 {
+		t.Fatalf("create schedule: %d %s", w.Code, w.Body.String())
+	}
+
 	// генерируем слоты (эмуляция ночной джобы)
 	tomorrow := time.Now().AddDate(0, 0, 1)
 	seedSlots(env, roomID, tomorrow, 10, 11)

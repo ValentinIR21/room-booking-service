@@ -95,7 +95,8 @@ func (b *BookingRepository) GetByID(ctx context.Context, id uuid.UUID, userID uu
 
 // GetByUser возвращает брони пользователя (только на будущие слоты)
 func (b *BookingRepository) GetByUser(ctx context.Context, userID uuid.UUID) ([]domain.Booking, error) {
-	rows, err := b.db.Pool.Query(ctx, `
+	q := b.db.Conn(ctx)
+	rows, err := q.Query(ctx, `
 		SELECT b.id, b.slot_id, b.user_id, b.status, b.conference_link, b.created_at
 		FROM bookings b
 		JOIN slots s ON s.id = b.slot_id
@@ -123,15 +124,16 @@ func (b *BookingRepository) GetByUser(ctx context.Context, userID uuid.UUID) ([]
 
 // GetAllPaginated возвращает все брони с пагинацией
 func (b *BookingRepository) GetAllPaginated(ctx context.Context, page, pageSize int) ([]domain.Booking, int, error) {
+	q := b.db.Conn(ctx)
 	offset := (page - 1) * pageSize
 
 	var total int
-	err := b.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM bookings`).Scan(&total)
+	err := q.QueryRow(ctx, `SELECT COUNT(*) FROM bookings`).Scan(&total)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	rows, err := b.db.Pool.Query(ctx, `
+	rows, err := q.Query(ctx, `
 		SELECT id, slot_id, user_id, status, conference_link, created_at
 		FROM bookings
 		ORDER BY created_at DESC

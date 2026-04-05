@@ -5,9 +5,8 @@ import "errors"
 var (
 	ErrRoomNotFound      = errors.New("room not found")
 	ErrScheduleExists    = errors.New("schedule already exists")
-	ErrInvalidSchedule   = errors.New("invalid schedule parameters")
-	ErrInvalidDateFormat = errors.New("invalid date format")
-	ErrSlotNotFound      = errors.New("slot not found")
+	ErrInvalidSchedule = errors.New("invalid schedule parameters")
+	ErrSlotNotFound    = errors.New("slot not found")
 	ErrSlotInPast        = errors.New("slot is in the past")
 	ErrSlotAlreadyBooked = errors.New("slot already booked")
 	ErrBookingNotFound   = errors.New("booking not found")

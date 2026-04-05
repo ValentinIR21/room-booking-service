@@ -15,8 +15,6 @@ func (s *Server) GetRoomsRoomIdSlotsList(w http.ResponseWriter, r *http.Request,
 		switch {
 		case errors.Is(err, domain.ErrRoomNotFound):
 			writeError(w, api.ROOMNOTFOUND, "room not found")
-		case errors.Is(err, domain.ErrInvalidDateFormat):
-			writeError(w, api.INVALIDREQUEST, "invalid date format")
 		default:
 			log.Printf("GetAvailableSlots error: %v", err)
 			writeError(w, api.INTERNALERROR, "failed to get slots")
