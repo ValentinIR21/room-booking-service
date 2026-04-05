@@ -34,10 +34,15 @@ func (s *ScheduleService) CreateSchedule(
 	if len(daysOfWeek) == 0 {
 		return nil, fmt.Errorf("%w: daysOfWeek is empty", domain.ErrInvalidSchedule)
 	}
+	seen := make(map[int]struct{}, len(daysOfWeek))
 	for _, d := range daysOfWeek {
 		if d < 1 || d > 7 {
 			return nil, fmt.Errorf("%w: daysOfWeek values must be 1-7", domain.ErrInvalidSchedule)
 		}
+		if _, dup := seen[d]; dup {
+			return nil, fmt.Errorf("%w: duplicate day %d", domain.ErrInvalidSchedule, d)
+		}
+		seen[d] = struct{}{}
 	}
 
 	// валидация формата времени
@@ -53,15 +58,6 @@ func (s *ScheduleService) CreateSchedule(
 		return nil, fmt.Errorf("%w: endTime must be after startTime", domain.ErrInvalidSchedule)
 	}
 
-	// проверка уникальности расписания
-	existing, err := s.repo.GetByRoomID(ctx, roomID)
-	if err != nil {
-		return nil, err
-	}
-	if existing != nil {
-		return nil, domain.ErrScheduleExists
-	}
-
 	schedule := domain.Schedule{
 		ID:         uuid.New(),
 		RoomID:     roomID,
@@ -69,7 +65,8 @@ func (s *ScheduleService) CreateSchedule(
 		StartTime:  startTime,
 		EndTime:    endTime,
 	}
-	if err := s.repo.Create(ctx, &schedule); err != nil {
+
+	if err = s.repo.Create(ctx, &schedule); err != nil {
 		return nil, err
 	}
 	return &schedule, nil

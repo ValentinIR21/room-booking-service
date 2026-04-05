@@ -17,24 +17,17 @@ func setupSlotTest() (*SlotService, *mockSlotRepo, *mockRoomRepo) {
 	return svc, slotRepo, roomRepo
 }
 
+func parseDate(s string) time.Time {
+	t, _ := time.Parse("2006-01-02", s)
+	return t
+}
+
 func TestGetAvailableSlots_RoomNotFound(t *testing.T) {
 	svc, _, _ := setupSlotTest()
 
-	_, err := svc.GetAvailableSlots(context.Background(), uuid.New(), "2026-04-07")
+	_, err := svc.GetAvailableSlots(context.Background(), uuid.New(), parseDate("2026-04-07"))
 	if !errors.Is(err, domain.ErrRoomNotFound) {
 		t.Errorf("expected ErrRoomNotFound, got %v", err)
-	}
-}
-
-func TestGetAvailableSlots_InvalidDate(t *testing.T) {
-	svc, _, roomRepo := setupSlotTest()
-
-	roomID := uuid.New()
-	roomRepo.Rooms[roomID] = &domain.Room{ID: roomID, Name: "Room"}
-
-	_, err := svc.GetAvailableSlots(context.Background(), roomID, "not-a-date")
-	if !errors.Is(err, domain.ErrInvalidDateFormat) {
-		t.Errorf("expected ErrInvalidDateFormat, got %v", err)
 	}
 }
 
@@ -44,7 +37,7 @@ func TestGetAvailableSlots_NoSlots(t *testing.T) {
 	roomID := uuid.New()
 	roomRepo.Rooms[roomID] = &domain.Room{ID: roomID, Name: "Room"}
 
-	slots, err := svc.GetAvailableSlots(context.Background(), roomID, "2026-04-07")
+	slots, err := svc.GetAvailableSlots(context.Background(), roomID, parseDate("2026-04-07"))
 	if err != nil {
 		t.Fatalf("GetAvailableSlots: %v", err)
 	}
@@ -73,7 +66,7 @@ func TestGetAvailableSlots_ReturnsOnlyRequestedDate(t *testing.T) {
 	slotRepo.Slots[slot2.ID] = &slot2
 	slotRepo.Slots[slot3.ID] = &slot3
 
-	slots, err := svc.GetAvailableSlots(context.Background(), roomID, tomorrowDate.Format("2006-01-02"))
+	slots, err := svc.GetAvailableSlots(context.Background(), roomID, tomorrowDate)
 	if err != nil {
 		t.Fatalf("GetAvailableSlots: %v", err)
 	}
@@ -98,7 +91,7 @@ func TestGetAvailableSlots_ExcludesBookedSlots(t *testing.T) {
 	slotRepo.Slots[slot2.ID] = &slot2
 	slotRepo.Bookings[slot1.ID] = true // slot1 забронирован
 
-	slots, err := svc.GetAvailableSlots(context.Background(), roomID, tomorrowDate.Format("2006-01-02"))
+	slots, err := svc.GetAvailableSlots(context.Background(), roomID, tomorrowDate)
 	if err != nil {
 		t.Fatalf("GetAvailableSlots: %v", err)
 	}

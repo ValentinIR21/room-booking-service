@@ -18,12 +18,17 @@ func NewScheduleRepository(db *DB) *ScheduleRepository {
 	return &ScheduleRepository{db: db}
 }
 
+// WithTx выполняет fn внутри транзакции.
+func (s *ScheduleRepository) WithTx(ctx context.Context, fn func(ctx context.Context) error) error {
+	return s.db.WithTx(ctx, fn)
+}
+
 // Создание расписания
 func (s *ScheduleRepository) Create(ctx context.Context, sinfo *domain.Schedule) error {
-
+	q := s.db.Conn(ctx)
 	query := `INSERT INTO schedules (id, room_id, days_of_week, start_time, end_time) VALUES ($1, $2, $3, $4, $5)`
 
-	_, err := s.db.Pool.Exec(
+	_, err := q.Exec(
 		ctx,
 		query,
 		sinfo.ID,
@@ -48,7 +53,8 @@ func (s *ScheduleRepository) GetByRoomID(ctx context.Context, roomID uuid.UUID) 
 
 	var sched domain.Schedule
 
-	err := s.db.Pool.QueryRow(ctx, query, roomID).Scan(&sched.ID,
+	q := s.db.Conn(ctx)
+	err := q.QueryRow(ctx, query, roomID).Scan(&sched.ID,
 		&sched.RoomID, &sched.DaysOfWeek, &sched.StartTime, &sched.EndTime)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil

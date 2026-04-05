@@ -47,7 +47,14 @@ func NewMockScheduleRepo() *MockScheduleRepo {
 	return &MockScheduleRepo{Schedules: make(map[uuid.UUID]*domain.Schedule)}
 }
 
+func (m *MockScheduleRepo) WithTx(ctx context.Context, fn func(ctx context.Context) error) error {
+	return fn(ctx)
+}
+
 func (m *MockScheduleRepo) Create(_ context.Context, s *domain.Schedule) error {
+	if _, exists := m.Schedules[s.RoomID]; exists {
+		return domain.ErrScheduleExists
+	}
 	m.Schedules[s.RoomID] = s
 	return nil
 }
@@ -121,6 +128,14 @@ func NewMockBookingRepo() *MockBookingRepo {
 	}
 }
 
+func (m *MockBookingRepo) WithTx(ctx context.Context, fn func(ctx context.Context) error) error {
+	return fn(ctx)
+}
+
+func (m *MockBookingRepo) HasActiveBooking(_ context.Context, slotID uuid.UUID) (bool, error) {
+	return m.ActiveSlot[slotID], nil
+}
+
 func (m *MockBookingRepo) Create(_ context.Context, b *domain.Booking) error {
 	if m.ActiveSlot[b.SlotID] {
 		return domain.ErrSlotAlreadyBooked
@@ -140,10 +155,13 @@ func (m *MockBookingRepo) Cancel(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
-func (m *MockBookingRepo) GetByID(_ context.Context, id uuid.UUID) (*domain.Booking, error) {
+func (m *MockBookingRepo) GetByID(_ context.Context, id uuid.UUID, userID uuid.UUID) (*domain.Booking, error) {
 	b, ok := m.Bookings[id]
 	if !ok {
 		return nil, domain.ErrBookingNotFound
+	}
+	if b.UserID != userID {
+		return nil, domain.ErrNotOwner
 	}
 	return b, nil
 }

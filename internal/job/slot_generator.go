@@ -34,6 +34,7 @@ type ScheduleRepo interface {
 
 type SlotRepo interface {
 	UpsertSlots(ctx context.Context, slots []domain.Slot) error
+	LastSlotDate(ctx context.Context, roomID uuid.UUID) (*time.Time, error)
 }
 
 func NewSlotGenerator(roomRepo RoomRepo, scheduleRepo ScheduleRepo, slotRepo SlotRepo) *SlotGenerator {
@@ -45,6 +46,7 @@ func NewSlotGenerator(roomRepo RoomRepo, scheduleRepo ScheduleRepo, slotRepo Slo
 }
 
 // GenerateAll генерирует слоты для всех комнат на generateDays дней вперёд.
+// Для каждой комнаты начинает с дня после последнего существующего слота (или с сегодня, если слотов нет).
 func (g *SlotGenerator) GenerateAll(ctx context.Context) error {
 	rooms, err := g.roomRepo.List(ctx)
 	if err != nil {
@@ -65,7 +67,25 @@ func (g *SlotGenerator) GenerateAll(ctx context.Context) error {
 			continue
 		}
 
-		slots, err := g.generateForRoom(room.ID, schedule, today, end)
+		from := today
+		lastSlotDate, err := g.slotRepo.LastSlotDate(ctx, room.ID)
+		if err != nil {
+			log.Printf("slot_generator: last slot date for room %s: %v", room.ID, err)
+			continue
+		}
+		if lastSlotDate != nil {
+			// начинаем со следующего дня после последнего слота
+			nextDay := time.Date(lastSlotDate.Year(), lastSlotDate.Month(), lastSlotDate.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, 1)
+			if nextDay.After(from) {
+				from = nextDay
+			}
+		}
+
+		if !from.Before(end) {
+			continue
+		}
+
+		slots, err := g.generateForRoom(room.ID, schedule, from, end)
 		if err != nil {
 			log.Printf("slot_generator: generate for room %s: %v", room.ID, err)
 			continue

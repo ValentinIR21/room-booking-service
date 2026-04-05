@@ -73,6 +73,22 @@ func (s *SlotRepository) GetFreeSlots(ctx context.Context, roomID uuid.UUID, sta
 	return slots, nil
 }
 
+// LastSlotDate возвращает дату начала последнего слота комнаты. Если слотов нет — возвращает nil.
+func (s *SlotRepository) LastSlotDate(ctx context.Context, roomID uuid.UUID) (*time.Time, error) {
+	var t time.Time
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT start_time FROM slots WHERE room_id = $1 ORDER BY start_time DESC LIMIT 1`,
+		roomID,
+	).Scan(&t)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &t, nil
+}
+
 // GetByID возвращает слот по ID
 func (s *SlotRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Slot, error) {
 	var slot domain.Slot

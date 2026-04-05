@@ -20,7 +20,7 @@ func NewBookingService(bookingRepo BookingRepo, slotRepo SlotRepo) *BookingServi
 	}
 }
 
-// CreateBooking создаёт бронь для пользователя на указанный слот
+// CreateBooking создаёт бронь для пользователя на указанный слот.
 func (s *BookingService) CreateBooking(ctx context.Context, userID uuid.UUID, slotID uuid.UUID) (*domain.Booking, error) {
 	slot, err := s.slotRepo.GetByID(ctx, slotID)
 	if err != nil {
@@ -37,7 +37,18 @@ func (s *BookingService) CreateBooking(ctx context.Context, userID uuid.UUID, sl
 		UserID: userID,
 		Status: domain.BookingStatusActive,
 	}
-	if err := s.bookingRepo.Create(ctx, booking); err != nil {
+
+	err = s.bookingRepo.WithTx(ctx, func(txCtx context.Context) error {
+		booked, err := s.bookingRepo.HasActiveBooking(txCtx, slotID)
+		if err != nil {
+			return err
+		}
+		if booked {
+			return domain.ErrSlotAlreadyBooked
+		}
+		return s.bookingRepo.Create(txCtx, booking)
+	})
+	if err != nil {
 		return nil, err
 	}
 	return booking, nil
@@ -45,13 +56,9 @@ func (s *BookingService) CreateBooking(ctx context.Context, userID uuid.UUID, sl
 
 // CancelBooking отменяет бронь
 func (s *BookingService) CancelBooking(ctx context.Context, bookingID uuid.UUID, userID uuid.UUID) (*domain.Booking, error) {
-	booking, err := s.bookingRepo.GetByID(ctx, bookingID)
+	booking, err := s.bookingRepo.GetByID(ctx, bookingID, userID)
 	if err != nil {
 		return nil, err
-	}
-
-	if booking.UserID != userID {
-		return nil, domain.ErrNotOwner
 	}
 
 	if booking.Status == domain.BookingStatusCancelled {

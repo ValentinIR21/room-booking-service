@@ -10,9 +10,7 @@ import (
 
 // GetRoomsRoomIdSlotsList GET /rooms/{roomId}/slots/list
 func (s *Server) GetRoomsRoomIdSlotsList(w http.ResponseWriter, r *http.Request, roomId api.RoomIdPath, params api.GetRoomsRoomIdSlotsListParams) {
-	date := params.Date.Time.Format("2006-01-02")
-
-	slots, err := s.slotService.GetAvailableSlots(r.Context(), roomId, date)
+	slots, err := s.slotService.GetAvailableSlots(r.Context(), roomId, params.Date.Time)
 	if err != nil {
 		switch {
 		case errors.Is(err, domain.ErrRoomNotFound):

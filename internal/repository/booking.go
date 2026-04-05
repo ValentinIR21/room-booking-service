@@ -7,7 +7,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type BookingRepository struct {
@@ -18,21 +17,36 @@ func NewBookingRepository(db *DB) *BookingRepository {
 	return &BookingRepository{db: db}
 }
 
-// Create создаёт бронирование
+// HasActiveBooking проверяет, есть ли активная бронь на слот.
+// Внутри транзакции использует FOR UPDATE для блокировки.
+func (b *BookingRepository) HasActiveBooking(ctx context.Context, slotID uuid.UUID) (bool, error) {
+	q := b.db.Conn(ctx)
+	var exists bool
+	err := q.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM bookings WHERE slot_id = $1 AND status = 'active' FOR UPDATE)`,
+		slotID,
+	).Scan(&exists)
+	return exists, err
+}
+
+// Create создаёт бронирование. Использует транзакцию из контекста, если есть.
 func (b *BookingRepository) Create(ctx context.Context, booking *domain.Booking) error {
-	query := `
-	INSERT INTO bookings (id, slot_id, user_id, status, conference_link)
-	VALUES ($1, $2, $3, $4, $5)
-	`
-	_, err := b.db.Pool.Exec(ctx, query, booking.ID, booking.SlotID, booking.UserID, booking.Status, booking.ConferenceLink)
+	q := b.db.Conn(ctx)
+	err := q.QueryRow(ctx,
+		`INSERT INTO bookings (id, slot_id, user_id, status, conference_link)
+		 VALUES ($1, $2, $3, $4, $5)
+		 RETURNING created_at`,
+		booking.ID, booking.SlotID, booking.UserID, booking.Status, booking.ConferenceLink,
+	).Scan(&booking.CreatedAt)
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "idx_unique_active_booking" {
-			return domain.ErrSlotAlreadyBooked
-		}
 		return err
 	}
 	return nil
+}
+
+// WithTx выполняет fn внутри транзакции.
+func (b *BookingRepository) WithTx(ctx context.Context, fn func(ctx context.Context) error) error {
+	return b.db.WithTx(ctx, fn)
 }
 
 // Cancel отменяет бронирование
@@ -45,8 +59,8 @@ func (b *BookingRepository) Cancel(ctx context.Context, bookingID uuid.UUID) err
 	return err
 }
 
-// GetByID возвращает бронь по ID
-func (b *BookingRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Booking, error) {
+// GetByID возвращает бронь по ID и userID. Если бронь не найдена — ErrBookingNotFound, если принадлежит другому — ErrNotOwner.
+func (b *BookingRepository) GetByID(ctx context.Context, id uuid.UUID, userID uuid.UUID) (*domain.Booking, error) {
 	query := `
 	SELECT id, slot_id, user_id, status, conference_link, created_at
 	FROM bookings
@@ -60,6 +74,9 @@ func (b *BookingRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.
 			return nil, domain.ErrBookingNotFound
 		}
 		return nil, err
+	}
+	if bk.UserID != userID {
+		return nil, domain.ErrNotOwner
 	}
 
 	return &bk, nil
