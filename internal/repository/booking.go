@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type BookingRepository struct {
@@ -18,12 +19,17 @@ func NewBookingRepository(db *DB) *BookingRepository {
 }
 
 // HasActiveBooking проверяет, есть ли активная бронь на слот.
-// Внутри транзакции использует FOR UPDATE для блокировки.
+// Блокирует строку слота через FOR UPDATE, чтобы предотвратить гонку при одновременном бронировании.
 func (b *BookingRepository) HasActiveBooking(ctx context.Context, slotID uuid.UUID) (bool, error) {
 	q := b.db.Conn(ctx)
+	// Лочим строку слота — она всегда существует, в отличие от строки бронирования
+	_, err := q.Exec(ctx, `SELECT 1 FROM slots WHERE id = $1 FOR UPDATE`, slotID)
+	if err != nil {
+		return false, err
+	}
 	var exists bool
-	err := q.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM bookings WHERE slot_id = $1 AND status = 'active' FOR UPDATE)`,
+	err = q.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM bookings WHERE slot_id = $1 AND status = 'active')`,
 		slotID,
 	).Scan(&exists)
 	return exists, err
@@ -39,6 +45,10 @@ func (b *BookingRepository) Create(ctx context.Context, booking *domain.Booking)
 		booking.ID, booking.SlotID, booking.UserID, booking.Status, booking.ConferenceLink,
 	).Scan(&booking.CreatedAt)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "idx_unique_active_booking" {
+			return domain.ErrSlotAlreadyBooked
+		}
 		return err
 	}
 	return nil
@@ -51,11 +61,11 @@ func (b *BookingRepository) WithTx(ctx context.Context, fn func(ctx context.Cont
 
 // Cancel отменяет бронирование
 func (b *BookingRepository) Cancel(ctx context.Context, bookingID uuid.UUID) error {
-	query := `
-	UPDATE bookings SET status = 'cancelled'
-	WHERE id = $1 AND status != 'cancelled'
-	`
-	_, err := b.db.Pool.Exec(ctx, query, bookingID)
+	q := b.db.Conn(ctx)
+	_, err := q.Exec(ctx,
+		`UPDATE bookings SET status = 'cancelled' WHERE id = $1 AND status != 'cancelled'`,
+		bookingID,
+	)
 	return err
 }
 
@@ -68,7 +78,8 @@ func (b *BookingRepository) GetByID(ctx context.Context, id uuid.UUID, userID uu
 	`
 
 	var bk domain.Booking
-	err := b.db.Pool.QueryRow(ctx, query, id).Scan(&bk.ID, &bk.SlotID, &bk.UserID, &bk.Status, &bk.ConferenceLink, &bk.CreatedAt)
+	q := b.db.Conn(ctx)
+	err := q.QueryRow(ctx, query, id).Scan(&bk.ID, &bk.SlotID, &bk.UserID, &bk.Status, &bk.ConferenceLink, &bk.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrBookingNotFound
