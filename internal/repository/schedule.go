@@ -3,9 +3,11 @@ package repository
 import (
 	"avito-talk/internal/domain"
 	"context"
+	"errors"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type ScheduleRepository struct {
@@ -30,7 +32,14 @@ func (s *ScheduleRepository) Create(ctx context.Context, sinfo *domain.Schedule)
 		sinfo.StartTime,
 		sinfo.EndTime,
 	)
-	return err
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return domain.ErrScheduleExists
+		}
+		return err
+	}
+	return nil
 }
 
 // Получить расписание комнаты
@@ -41,7 +50,7 @@ func (s *ScheduleRepository) GetByRoomID(ctx context.Context, roomID uuid.UUID) 
 
 	err := s.db.Pool.QueryRow(ctx, query, roomID).Scan(&sched.ID,
 		&sched.RoomID, &sched.DaysOfWeek, &sched.StartTime, &sched.EndTime)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {

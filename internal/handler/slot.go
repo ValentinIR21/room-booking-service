@@ -1,38 +1,29 @@
 package handler
 
 import (
-	"avito-talk/internal/service"
-	"encoding/json"
+	"avito-talk/internal/api"
+	"avito-talk/internal/domain"
+	"errors"
+	"log"
 	"net/http"
-
-	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 )
 
-type SlotHandler struct {
-	slotService *service.SlotService
-}
+// GetRoomsRoomIdSlotsList GET /rooms/{roomId}/slots/list
+func (s *Server) GetRoomsRoomIdSlotsList(w http.ResponseWriter, r *http.Request, roomId api.RoomIdPath, params api.GetRoomsRoomIdSlotsListParams) {
+	date := params.Date.Time.Format("2006-01-02")
 
-func NewSlotHandler(ss *service.SlotService) *SlotHandler {
-	return &SlotHandler{slotService: ss}
-}
-
-func (h *SlotHandler) GetAvailableSlots(w http.ResponseWriter, r *http.Request) {
-	roomIDStr := chi.URLParam(r, "roomId")
-	roomID, err := uuid.Parse(roomIDStr)
+	slots, err := s.slotService.GetAvailableSlots(r.Context(), roomId, date)
 	if err != nil {
-		http.Error(w, `{"error":{"code":"INVALID_REQUEST","message":"invalid room id"}}`, http.StatusBadRequest)
+		switch {
+		case errors.Is(err, domain.ErrRoomNotFound):
+			writeError(w, api.ROOMNOTFOUND, "room not found")
+		case errors.Is(err, domain.ErrInvalidDateFormat):
+			writeError(w, api.INVALIDREQUEST, "invalid date format")
+		default:
+			log.Printf("GetAvailableSlots error: %v", err)
+			writeError(w, api.INTERNALERROR, "failed to get slots")
+		}
 		return
 	}
-	date := r.URL.Query().Get("date")
-	if date == "" {
-		http.Error(w, `{"error":{"code":"INVALID_REQUEST","message":"date is required"}}`, http.StatusBadRequest)
-		return
-	}
-	slots, err := h.slotService.GetAvailableSlots(r.Context(), roomID, date)
-	if err != nil {
-		http.Error(w, `{"error":{"code":"INTERNAL_ERROR","message":"failed to get slots"}}`, http.StatusInternalServerError)
-		return
-	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"slots": slots})
+	respondJSON(w, http.StatusOK, map[string]any{"slots": slots})
 }
