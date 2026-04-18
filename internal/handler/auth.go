@@ -1,52 +1,36 @@
 package handler
 
 import (
-	"avito-talk/internal/service"
+	"avito-talk/internal/api"
 	"encoding/json"
 	"net/http"
 )
 
-type AuthHandler struct {
-	authService *service.AuthService
-}
-
-func NewAuthHandler(authService *service.AuthService) *AuthHandler {
-	return &AuthHandler{authService: authService}
-}
-
-// DummyLogin /dummyLogin
-func (h *AuthHandler) DummyLogin(w http.ResponseWriter, r *http.Request) {
-	// Парсим тело запроса (JSON)
-	var req struct {
-		Role string `json:"role"`
-	}
+// PostDummyLogin POST /dummyLogin
+func (s *Server) PostDummyLogin(w http.ResponseWriter, r *http.Request) {
+	var req api.PostDummyLoginJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":{"code":"INVALID_REQUEST","message":"invalid json"}}`, http.StatusBadRequest)
+		writeError(w, api.INVALIDREQUEST, "invalid json")
 		return
 	}
 
-	// Проверяем, что роль допустима
-	if req.Role != "admin" && req.Role != "user" {
-		http.Error(w, `{"error":{"code":"INVALID_REQUEST","message":"role must be admin or user"}}`, http.StatusBadRequest)
+	if !req.Role.Valid() {
+		writeError(w, api.INVALIDREQUEST, "role must be admin or user")
 		return
 	}
 
-	// Фиксированные UUID из init.sql
 	var userID string
-	if req.Role == "admin" {
+	if req.Role == api.PostDummyLoginJSONBodyRoleAdmin {
 		userID = "11111111-1111-1111-1111-111111111111"
 	} else {
 		userID = "22222222-2222-2222-2222-222222222222"
 	}
 
-	// Генерируем токен
-	token, err := h.authService.GenerateToken(userID, req.Role)
+	token, err := s.authService.GenerateToken(userID, string(req.Role))
 	if err != nil {
-		http.Error(w, `{"error":{"code":"INTERNAL_ERROR","message":"token generation failed"}}`, http.StatusInternalServerError)
+		writeError(w, api.INTERNALERROR, "token generation failed")
 		return
 	}
 
-	// Отдаём JSON с токеном
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"token": token})
+	respondJSON(w, http.StatusOK, api.Token{Token: token})
 }

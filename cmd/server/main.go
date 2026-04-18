@@ -1,7 +1,9 @@
 package main
 
 import (
+	"avito-talk/internal/api"
 	"avito-talk/internal/handler"
+	"avito-talk/internal/job"
 	"avito-talk/internal/repository"
 	"avito-talk/internal/service"
 	"context"
@@ -46,54 +48,83 @@ func main() {
 	// сервисы
 	authService := service.NewAuthService(jwtSecret)
 	roomService := service.NewRoomService(roomRepos)
-	scheduleService := service.NewScheduleService(scheduleRepos)
-	slotService := service.NewSlotService(slotRepos, scheduleRepos)
+	scheduleService := service.NewScheduleService(scheduleRepos, roomRepos)
+	slotService := service.NewSlotService(slotRepos, roomRepos)
 	bookingService := service.NewBookingService(bookingRepos, slotRepos)
 
-	// хендлеры
-	authHandler := handler.NewAuthHandler(authService)
-	roomHandler := handler.NewRoomHandler(roomService)
-	scheduleHandler := handler.NewScheduleHandler(scheduleService)
-	slotHandler := handler.NewSlotHandler(slotService)
-	bookingHandler := handler.NewBookingHandler(bookingService)
+	// джоба генерации слотов: запуск сразу + каждую ночь
+	slotGen := job.NewSlotGenerator(roomRepos, scheduleRepos, slotRepos)
+	jobCtx, jobCancel := context.WithCancel(ctx)
+	defer jobCancel()
+	go slotGen.Start(jobCtx)
+
+	// хендлер, реализующий api.ServerInterface
+	srv := handler.NewServer(authService, roomService, scheduleService, slotService, bookingService)
 
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
+			next.ServeHTTP(w, r)
+		})
+	})
 
-	// публичные
-	r.Post("/dummyLogin", authHandler.DummyLogin)
 	r.Get("/_info", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 
-	// защищённые
+	// обёртка из сгенерированного кода: парсит параметры и ставит BearerAuthScopes
+	wrapper := api.ServerInterfaceWrapper{
+		Handler:          srv,
+		ErrorHandlerFunc: handler.OapiErrorHandler,
+	}
+
+	authMw := handler.AuthMiddleware(authService)
+
+	// публичные эндпоинты — без авторизации
 	r.Group(func(r chi.Router) {
-		r.Use(handler.AuthMiddleware(authService))
+		r.Post("/dummyLogin", wrapper.PostDummyLogin)
+		r.Post("/login", wrapper.PostLogin)
+		r.Post("/register", wrapper.PostRegister)
+	})
 
-		r.Get("/rooms/list", roomHandler.ListRooms)
-		r.Post("/rooms/create", roomHandler.CreateRoom)
+	// эндпоинты, доступные любому авторизованному пользователю
+	r.Group(func(r chi.Router) {
+		r.Use(authMw)
+		r.Get("/rooms/list", wrapper.GetRoomsList)
+		r.Get("/rooms/{roomId}/slots/list", wrapper.GetRoomsRoomIdSlotsList)
+	})
 
-		r.Post("/rooms/{roomId}/schedule/create", scheduleHandler.CreateSchedule)
+	// эндпоинты только для admin
+	r.Group(func(r chi.Router) {
+		r.Use(authMw)
+		r.Use(handler.RequireRole("admin"))
+		r.Post("/rooms/create", wrapper.PostRoomsCreate)
+		r.Post("/rooms/{roomId}/schedule/create", wrapper.PostRoomsRoomIdScheduleCreate)
+		r.Get("/bookings/list", wrapper.GetBookingsList)
+	})
 
-		r.Get("/rooms/{roomId}/slots/list", slotHandler.GetAvailableSlots)
-
-		r.Post("/bookings/create", bookingHandler.CreateBooking)
-		r.Get("/bookings/my", bookingHandler.MyBookings)
-		r.Get("/bookings/list", bookingHandler.ListAllBookings)
-		r.Post("/bookings/{bookingId}/cancel", bookingHandler.CancelBooking)
+	// эндпоинты только для user
+	r.Group(func(r chi.Router) {
+		r.Use(authMw)
+		r.Use(handler.RequireRole("user"))
+		r.Post("/bookings/create", wrapper.PostBookingsCreate)
+		r.Get("/bookings/my", wrapper.GetBookingsMy)
+		r.Post("/bookings/{bookingId}/cancel", wrapper.PostBookingsBookingIdCancel)
 	})
 
 	port := os.Getenv("SERVER_PORT")
 	if port == "" {
 		port = "8080"
 	}
-	srv := &http.Server{
+	httpSrv := &http.Server{
 		Addr:    ":" + port,
 		Handler: r,
 	}
 
 	go func() {
 		log.Printf("Server started on port %s", port)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server failed: %v", err)
 		}
 	}()
@@ -104,7 +135,7 @@ func main() {
 	log.Println("Выключение...")
 	ctxShutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := srv.Shutdown(ctxShutdown); err != nil {
+	if err := httpSrv.Shutdown(ctxShutdown); err != nil {
 		log.Fatalf("Ошибка завершения работы: %v", err)
 	}
 }

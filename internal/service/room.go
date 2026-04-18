@@ -2,18 +2,17 @@ package service
 
 import (
 	"avito-talk/internal/domain"
-	"avito-talk/internal/repository"
 	"context"
 
 	"github.com/google/uuid"
 )
 
 type RoomService struct {
-	repos *repository.RoomRepository
+	repo RoomRepo
 }
 
-func NewRoomService(repos *repository.RoomRepository) *RoomService {
-	return &RoomService{repos: repos}
+func NewRoomService(repo RoomRepo) *RoomService {
+	return &RoomService{repo: repo}
 }
 
 func (s *RoomService) CreateRoom(ctx context.Context, name string, description *string, capacity *int) (*domain.Room, error) {
@@ -23,12 +22,12 @@ func (s *RoomService) CreateRoom(ctx context.Context, name string, description *
 		Description: description,
 		Capacity:    capacity,
 	}
-	if err := s.repos.Create(ctx, room); err != nil {
+	if err := s.repo.Create(ctx, room); err != nil {
 		return nil, err
 	}
 	return room, nil
 }
 
 func (s *RoomService) ListRooms(ctx context.Context) ([]domain.Room, error) {
-	return s.repos.List(ctx)
+	return s.repo.List(ctx)
 }

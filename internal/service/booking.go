@@ -2,81 +2,84 @@ package service
 
 import (
 	"avito-talk/internal/domain"
-	"avito-talk/internal/repository"
 	"context"
-	"errors"
 	"time"
 
 	"github.com/google/uuid"
 )
 
 type BookingService struct {
-	bookingRepos *repository.BookingRepository
-	slotRepos    *repository.SlotRepository
+	bookingRepo BookingRepo
+	slotRepo    SlotRepo
 }
 
-func NewBookingService(bookingRepo *repository.BookingRepository, slotRepo *repository.SlotRepository) *BookingService {
+func NewBookingService(bookingRepo BookingRepo, slotRepo SlotRepo) *BookingService {
 	return &BookingService{
-		bookingRepos: bookingRepo,
-		slotRepos:    slotRepo,
+		bookingRepo: bookingRepo,
+		slotRepo:    slotRepo,
 	}
 }
 
-// CreateBooking создаёт бронь для пользователя на указанный слот
+// CreateBooking создаёт бронь для пользователя на указанный слот.
 func (s *BookingService) CreateBooking(ctx context.Context, userID uuid.UUID, slotID uuid.UUID) (*domain.Booking, error) {
-
-	// получаем слот из БД
-	slot, err := s.slotRepos.GetByID(ctx, slotID)
+	slot, err := s.slotRepo.GetByID(ctx, slotID)
 	if err != nil {
-		return nil, errors.New("slot not found")
+		return nil, err
 	}
 
-	// проверка, что слот не в прошлом
 	if slot.Start.Before(time.Now().UTC()) {
-		return nil, errors.New("slot is in the past")
+		return nil, domain.ErrSlotInPast
 	}
 
-	// пытаемся создать бронь
 	booking := &domain.Booking{
 		ID:     uuid.New(),
 		SlotID: slotID,
 		UserID: userID,
 		Status: domain.BookingStatusActive,
 	}
-	err = s.bookingRepos.Create(ctx, booking)
+
+	err = s.bookingRepo.WithTx(ctx, func(txCtx context.Context) error {
+		booked, err := s.bookingRepo.HasActiveBooking(txCtx, slotID)
+		if err != nil {
+			return err
+		}
+		if booked {
+			return domain.ErrSlotAlreadyBooked
+		}
+		return s.bookingRepo.Create(txCtx, booking)
+	})
 	if err != nil {
-		//слот уже занят
-		return nil, errors.New("slot already booked")
+		return nil, err
 	}
 	return booking, nil
 }
 
 // CancelBooking отменяет бронь
 func (s *BookingService) CancelBooking(ctx context.Context, bookingID uuid.UUID, userID uuid.UUID) (*domain.Booking, error) {
-	booking, err := s.bookingRepos.GetByID(ctx, bookingID)
+	booking, err := s.bookingRepo.GetByID(ctx, bookingID, userID)
 	if err != nil {
-		return nil, errors.New("бронирование не найдено")
+		return nil, err
 	}
-	if booking.UserID != userID {
-		return nil, errors.New("невозможно отменить бронирование другого пользователя")
-	}
+
 	if booking.Status == domain.BookingStatusCancelled {
 		return booking, nil
 	}
-	// отменяем
-	if err := s.bookingRepos.Cancel(ctx, bookingID); err != nil {
+
+	if err := s.bookingRepo.Cancel(ctx, bookingID); err != nil {
 		return nil, err
 	}
+
 	booking.Status = domain.BookingStatusCancelled
+
 	return booking, nil
 }
 
-// возвращает будущие брони пользователя
+// GetUserBookings возвращает будущие брони пользователя
 func (s *BookingService) GetUserBookings(ctx context.Context, userID uuid.UUID) ([]domain.Booking, error) {
-	return s.bookingRepos.GetByUser(ctx, userID)
+	return s.bookingRepo.GetByUser(ctx, userID)
 }
 
-// возвращает все брони с пагинацией (для admina)
+// GetAllBookings возвращает все брони с пагинацией
 func (s *BookingService) GetAllBookings(ctx context.Context, page, pageSize int) ([]domain.Booking, int, error) {
-	return s.bookingRepos.GetAllPaginated(ctx, page, pageSize)
+	return s.bookingRepo.GetAllPaginated(ctx, page, pageSize)
 }
